@@ -1,0 +1,85 @@
+# Copyright 2025 Daniel Pfeifer <daniel@pfeifer-mail.de>
+# This work is free. You can redistribute it and/or modify it under the
+# terms of the Do What The Fuck You Want To Public License, Version 2,
+# as published by Sam Hocevar. See http://www.wtfpl.net/ for more details.
+
+name: CI
+permissions: { contents: write }
+
+on:
+  pull_request:
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    name: "${{ matrix.toolchain.os }} (${{ matrix.toolchain.cc }}, depends: ${{ matrix.depends }})"
+    runs-on: ${{ matrix.toolchain.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - runner: macos-15
+            os: Darwin
+            cc: clang
+            dep: Darwin-gcc
+          - runner: ubuntu-24.04
+            os: Linux
+            cc: gcc
+            dep: Linux-clang
+          - runner: windows-2025
+            os: win64
+            cc: gcc
+            dep: win64-gcc
+          - runner: windows-2025
+            os: win64
+            cc: cl
+            dep: win64-cl
+
+        depends:
+          - true
+          - false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Dependencies
+        if: ${{ !matrix.depends }}
+        shell: cmake -P {0}
+        run: |
+          foreach(pkg
+              "https://github.com/purpleKarrot/qux/releases/download/v1.1.0/Qux-1.1.0-${{ matrix.toolchain.os }}-runtime.tar.gz"
+              "https://github.com/purpleKarrot/qux/releases/download/v1.1.0/Qux-1.1.0-${{ matrix.toolchain.os }}-develop.tar.gz"
+              "https://github.com/purpleKarrot/bar/releases/download/v1.0.0/Bar-1.0.0-${{ matrix.toolchain.dep }}-static.tar.gz"
+              "https://github.com/purpleKarrot/baz/releases/download/v1.0.0/Baz-1.0.0-${{ matrix.toolchain.dep }}.tar.gz"
+              )
+            file(DOWNLOAD "${pkg}" "pkg.tgz")
+            file(ARCHIVE_EXTRACT INPUT "pkg.tgz" DESTINATION prefix)
+          endforeach()
+
+      - name: Add MSVC tools to PATH (Windows)
+        if: matrix.toolchain.cc == 'cl'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake (with depends provider)
+        if: matrix.depends
+        run: >
+          cmake -B build -G "Ninja Multi-Config"
+          -DCMAKE_PROJECT_TOP_LEVEL_INCLUDES=${{ github.workspace }}/depends.cmake
+        env:
+          CC: ${{ matrix.toolchain.cc }}
+
+      - name: Configure CMake (with prefix)
+        if: ${{ !matrix.depends }}
+        run: >
+          cmake -B build -G "Ninja Multi-Config"
+          -DCMAKE_PREFIX_PATH:PATH=${{ github.workspace }}/prefix
+        env:
+          CC: ${{ matrix.toolchain.cc }}
+
+      - name: Build Release
+        run: cmake --build build --config Release
+
+      - name: Run Tests
+        run: ctest --test-dir build --build-config Release --verbose
